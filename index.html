@@ -33,6 +33,11 @@
   .header-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
   .header h1 { font-size: 17px; font-weight: 500; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   .header p { font-size: 12px; color: var(--text3); margin-top: 2px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .refresh-btn { background: none; border: none; color: var(--text2); font-size: 17px; cursor: pointer; padding: 2px 4px; line-height: 1; }
+  .refresh-btn:active { color: var(--text); }
+  .refresh-btn.spinning { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .user-chip { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding-top: 2px; }
   .user-chip .user-name { font-size: 12px; font-weight: 500; white-space: nowrap; }
   .user-chip .role-tag { font-size: 10px; padding: 2px 7px; border-radius: 20px; background: var(--bg3); color: var(--text3); white-space: nowrap; }
@@ -124,7 +129,10 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Relojería
       </h1>
-      <div class="user-chip" id="user-chip"></div>
+      <div class="header-actions">
+        <button class="refresh-btn" id="refresh-btn" onclick="refrescarManual()" aria-label="Actualizar">⟳</button>
+        <div class="user-chip" id="user-chip"></div>
+      </div>
     </div>
     <p id="header-sub">Registro de ventas</p>
     <div class="tabs" id="tabs-container"></div>
@@ -293,7 +301,7 @@
           <input type="number" id="c-precio" placeholder="0" min="0">
         </div>
       </div>
-      <button class="btn-primary" onclick="agregarProducto()">Agregar al catálogo</button>
+      <button class="btn-primary" id="btn-agregar-prod" onclick="agregarProducto()">Agregar al catálogo</button>
     </div>
 
     <div class="card" id="catalogo-lista">
@@ -337,7 +345,7 @@
           <input type="date" id="g-fecha">
         </div>
       </div>
-      <button class="btn-primary" onclick="guardarGasto()">Guardar gasto</button>
+      <button class="btn-primary" id="btn-guardar-gasto" onclick="guardarGasto()">Guardar gasto</button>
     </div>
 
     <div class="card">
@@ -374,34 +382,21 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const SCRIPT_ID = 'AKfycbwM58VQ8aVIA0WJYmkqOFmO8JvK4U9bsQ5OBDmegw2rKLmoR_88cwSFEALaB6f2-4rHow';
+const SCRIPT_ID = 'AKfycbzuq-WcpNjNm-c7sc3jUmkCLIXmFo5VSVI4OApPCKWrEj3Mh5pJ_r1hMkUO6w1BuHW1Pg';
 const URL = 'https://script.google.com/macros/s/' + SCRIPT_ID + '/exec';
 
 // 🔐 Usuarios y códigos de acceso. Cambia los códigos y nombres por los reales.
-// "admin" ve todas las pestañas. "empleado" solo ve Nueva venta y Catálogo,
-// y no ve el balance de ganancia estimada en Nueva venta.
 const USERS = [
   { code: '2019', role: 'admin', nombre: 'Administrador' },
   { code: '0001', role: 'empleado', nombre: 'Empleado 1' },
   { code: '0002', role: 'empleado', nombre: 'Empleado 2' }
 ];
 let currentUser = null;
+let pollInterval = null;
 
-let products = JSON.parse(localStorage.getItem('rl_products') || '[]');
-let salesLog = JSON.parse(localStorage.getItem('rl_sales_log') || '[]');
-let expensesLog = JSON.parse(localStorage.getItem('rl_expenses_log') || '[]');
-
-// Compatibilidad con ventas guardadas antes de tener estado de envío
-salesLog.forEach(s => {
-  if (!s.id) s.id = 'v' + Date.now() + Math.random().toString(36).slice(2, 8);
-  if (!s.estado) s.estado = 'enviado';
-});
-
-function save() {
-  localStorage.setItem('rl_products', JSON.stringify(products));
-  localStorage.setItem('rl_sales_log', JSON.stringify(salesLog));
-  localStorage.setItem('rl_expenses_log', JSON.stringify(expensesLog));
-}
+let products = [];
+let salesLog = [];
+let expensesLog = [];
 
 function fmt(n) {
   return '$' + Math.round(n).toLocaleString('es-CO');
@@ -412,6 +407,83 @@ function toast(msg, type='') {
   t.textContent = msg;
   t.className = 'toast show' + (type ? ' '+type : '');
   setTimeout(() => t.className = 'toast', 3000);
+}
+
+/* ---------- Sincronización con Google Sheets ---------- */
+
+function normalizarVenta(v) {
+  return {
+    id: v.id, fecha: v.fecha, registradoPor: v.registradoPor, cliente: v.cliente, telefono: v.telefono,
+    correo: v.correo, direccion: v.direccion, barrio: v.barrio, ciudad: v.ciudad, canal: v.canal,
+    formaPago: v.formaPago, categoria: v.categoria, producto: v.producto, color: v.color,
+    transportadora: v.transportadora, guia: v.guia,
+    envioCobrado: Number(v.envioCobrado) || 0, envioReal: Number(v.envioReal) || 0,
+    envioAsumidoEmpresa: Number(v.envioAsumidoEmpresa) || 0,
+    precioVenta: Number(v.precioVenta) || 0, costoProducto: Number(v.costoProducto) || 0,
+    ganancia: Number(v.ganancia) || 0,
+    estado: v.estado || 'enviado', subEstadoDevolucion: v.subEstadoDevolucion || null
+  };
+}
+
+function normalizarGasto(g) {
+  return { id: g.id, fecha: g.fecha, tipo: g.tipo, descripcion: g.descripcion, monto: Number(g.monto) || 0, registradoPor: g.registradoPor };
+}
+
+async function fetchAllData() {
+  try {
+    const res = await fetch(URL);
+    const data = await res.json();
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Respuesta inválida');
+    products = (data.productos || []).map(p => ({ id: p.id, cat: p.cat, nombre: p.nombre, costo: Number(p.costo)||0, precio: Number(p.precio)||0 }));
+    salesLog = (data.ventas || []).map(normalizarVenta).reverse();
+    expensesLog = (data.gastos || []).map(normalizarGasto).reverse();
+    return true;
+  } catch (e) {
+    toast('No se pudo conectar con Google Sheets', 'error');
+    return false;
+  }
+}
+
+async function postAction(payload) {
+  try {
+    await fetch(URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function iniciarPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(async () => {
+    const ok = await fetchAllData();
+    if (ok) renderActiveTab();
+  }, 25000);
+}
+
+async function refrescarManual() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  const ok = await fetchAllData();
+  renderActiveTab();
+  btn.classList.remove('spinning');
+  toast(ok ? 'Datos actualizados' : 'No se pudo actualizar', ok ? '' : 'error');
+}
+
+function renderActiveTab() {
+  const activeSection = document.querySelector('.section.active');
+  if (!activeSection) return;
+  const tab = activeSection.id.replace('sec-', '');
+  if (tab === 'venta') buildCatSelect();
+  if (tab === 'catalogo') renderCatalog();
+  if (tab === 'envios') renderEnvios();
+  if (tab === 'gastos') renderGastos();
+  if (tab === 'resumen') renderResumen();
 }
 
 /* ---------- Login ---------- */
@@ -437,11 +509,12 @@ function intentarLogin() {
 }
 
 function logout() {
+  if (pollInterval) clearInterval(pollInterval);
   localStorage.removeItem('rl_session');
   location.reload();
 }
 
-function entrarApp() {
+async function entrarApp() {
   document.getElementById('login-overlay').style.display = 'none';
   document.getElementById('app-root').style.display = 'block';
   document.body.className = 'role-' + currentUser.role;
@@ -451,7 +524,6 @@ function entrarApp() {
 
   renderUserChip();
   renderTabs();
-  switchTab('venta');
 
   if (!document.getElementById('v-registrador').value) {
     document.getElementById('v-registrador').value = currentUser.nombre;
@@ -459,7 +531,12 @@ function entrarApp() {
   document.getElementById('v-fecha').value = new Date().toISOString().split('T')[0];
   const gFecha = document.getElementById('g-fecha');
   if (gFecha) gFecha.value = new Date().toISOString().split('T')[0];
+
+  toast('Cargando datos...');
+  await fetchAllData();
+  switchTab('venta');
   buildCatSelect();
+  iniciarPolling();
 }
 
 function renderUserChip() {
@@ -480,7 +557,7 @@ const ALL_TABS = [
 
 function renderTabs() {
   const visible = ALL_TABS.filter(t => t.roles.includes(currentUser.role));
-  document.getElementById('tabs-container').innerHTML = visible.map((t, i) =>
+  document.getElementById('tabs-container').innerHTML = visible.map((t) =>
     `<button class="tab" data-tab="${t.id}" onclick="switchTab('${t.id}')">${t.label}</button>`
   ).join('');
 }
@@ -510,24 +587,28 @@ function buildCatSelect() {
   const cats = getCategories();
   sel.innerHTML = '<option value="">Selecciona categoría...</option>' +
     cats.map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+  if (cur && cats.includes(cur)) onCatChange();
 }
 
 function onCatChange() {
   const cat = document.getElementById('v-categoria').value;
   const sel = document.getElementById('v-producto');
+  const curProd = sel.value;
   const prods = products.filter(p => p.cat === cat);
   sel.innerHTML = prods.length
-    ? '<option value="">Selecciona referencia...</option>' + prods.map((p,i) => `<option value="${products.indexOf(p)}">${p.nombre}</option>`).join('')
+    ? '<option value="">Selecciona referencia...</option>' + prods.map(p => `<option value="${p.id}" ${p.id===curProd?'selected':''}>${p.nombre}</option>`).join('')
     : '<option value="">Sin referencias en esta categoría</option>';
-  document.getElementById('v-precio').value = '';
-  document.getElementById('v-color').value = '';
-  document.getElementById('gain-preview').style.display = 'none';
+  if (!prods.some(p => p.id === curProd)) {
+    document.getElementById('v-precio').value = '';
+    document.getElementById('v-color').value = '';
+    document.getElementById('gain-preview').style.display = 'none';
+  }
 }
 
 function onProdChange() {
-  const idx = parseInt(document.getElementById('v-producto').value);
-  if (isNaN(idx) || idx < 0) return;
-  const p = products[idx];
+  const id = document.getElementById('v-producto').value;
+  const p = products.find(x => x.id === id);
+  if (!p) return;
   document.getElementById('v-precio').value = p.precio;
   updatePreview();
 }
@@ -536,8 +617,9 @@ function onProdChange() {
 
 function updatePreview() {
   const precio = parseFloat(document.getElementById('v-precio').value) || 0;
-  const prodIdx = parseInt(document.getElementById('v-producto').value);
-  const costo = (!isNaN(prodIdx) && products[prodIdx]) ? (products[prodIdx].costo || 0) : 0;
+  const prodId = document.getElementById('v-producto').value;
+  const prod = products.find(p => p.id === prodId);
+  const costo = prod ? (prod.costo || 0) : 0;
   const envioCobrado = parseFloat(document.getElementById('v-envio-cobrado').value) || 0;
   const envioReal = parseFloat(document.getElementById('v-envio-real').value) || 0;
   const envioAsumidoEmpresa = envioReal - envioCobrado;
@@ -589,7 +671,7 @@ async function guardarVenta() {
   const canal = document.getElementById('v-canal').value;
   const formaPago = document.getElementById('v-formapago').value;
   const catVal = document.getElementById('v-categoria').value;
-  const prodIdx = parseInt(document.getElementById('v-producto').value);
+  const prodId = document.getElementById('v-producto').value;
   const color = document.getElementById('v-color').value.trim();
   const transportadora = document.getElementById('v-transportadora').value;
   const guia = document.getElementById('v-guia').value.trim();
@@ -597,17 +679,18 @@ async function guardarVenta() {
   const envioReal = parseFloat(document.getElementById('v-envio-real').value) || 0;
   const precio = parseFloat(document.getElementById('v-precio').value) || 0;
 
-  if (!catVal || isNaN(prodIdx) || prodIdx < 0) {
-    toast('Selecciona categoría y producto', 'error'); return;
-  }
+  if (!catVal || !prodId) { toast('Selecciona categoría y producto', 'error'); return; }
   if (!precio) { toast('Ingresa el precio de venta', 'error'); return; }
 
-  const prod = products[prodIdx];
+  const prod = products.find(p => p.id === prodId);
+  if (!prod) { toast('Selecciona un producto válido', 'error'); return; }
+
   const costo = prod.costo || 0;
   const envioAsumidoEmpresa = envioReal - envioCobrado;
   const ganancia = precio - costo - envioAsumidoEmpresa;
+  const idNuevo = 'v' + Date.now() + Math.random().toString(36).slice(2, 8);
   const row = {
-    id: 'v' + Date.now() + Math.random().toString(36).slice(2, 8),
+    id: idNuevo,
     fecha: fecha || new Date().toISOString().split('T')[0],
     registradoPor,
     cliente, telefono, correo, direccion, barrio, ciudad,
@@ -630,25 +713,21 @@ async function guardarVenta() {
   btn.textContent = 'Guardando...';
   status.textContent = '';
 
-  try {
-    await fetch(URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ registro: 'venta', ...row })
-    });
-    salesLog.unshift(row);
-    if (salesLog.length > 50) salesLog.pop();
-    save();
+  await postAction({ accion: 'crear_venta', ...row });
+  await fetchAllData();
+  const exito = salesLog.some(s => s.id === idNuevo);
+
+  if (exito) {
     toast('Guardado en Google Sheets');
     status.textContent = 'Enviado correctamente a la tabla';
     resetForm();
-  } catch(e) {
-    toast('Error al guardar. Verifica tu conexión.', 'error');
+  } else {
+    toast('No se pudo confirmar el guardado. Verifica tu conexión.', 'error');
     status.textContent = 'Error de conexión';
   }
   btn.disabled = false;
   btn.textContent = 'Guardar en Google Sheets';
+  renderActiveTab();
 }
 
 function resetForm() {
@@ -668,14 +747,21 @@ function resetForm() {
 
 /* ---------- Catálogo ---------- */
 
-function agregarProducto() {
+async function agregarProducto() {
   const cat = document.getElementById('c-cat').value.trim().toUpperCase();
   const nombre = document.getElementById('c-nombre').value.trim();
   const costo = parseFloat(document.getElementById('c-costo').value) || 0;
   const precio = parseFloat(document.getElementById('c-precio').value) || 0;
   if (!cat || !nombre) { toast('Completa categoría y nombre', 'error'); return; }
-  products.push({ cat, nombre, costo, precio });
-  save();
+
+  const btn = document.getElementById('btn-agregar-prod');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+
+  const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 8);
+  await postAction({ accion: 'crear_producto', id, cat, nombre, costo, precio });
+  await fetchAllData();
+
   document.getElementById('c-cat').value = '';
   document.getElementById('c-nombre').value = '';
   document.getElementById('c-costo').value = '';
@@ -683,12 +769,14 @@ function agregarProducto() {
   buildCatSelect();
   renderCatalog();
   toast('Referencia agregada');
+  btn.disabled = false;
+  btn.textContent = 'Agregar al catálogo';
 }
 
-function eliminarProducto(idx) {
+async function eliminarProducto(id) {
   if (!confirm('¿Eliminar esta referencia?')) return;
-  products.splice(idx, 1);
-  save();
+  await postAction({ accion: 'eliminar_producto', id });
+  await fetchAllData();
   buildCatSelect();
   renderCatalog();
 }
@@ -701,12 +789,11 @@ function renderCatalog() {
     const items = products.filter(p => p.cat === cat);
     return `<div class="cat-header">${cat}</div>` +
       items.map(p => {
-        const idx = products.indexOf(p);
         const margen = p.precio > 0 ? Math.round(((p.precio - p.costo) / p.precio) * 100) : 0;
         return `<div class="recent-item">
           <div class="recent-top">
             <span class="recent-prod">${p.nombre}</span>
-            <button class="del-btn" onclick="eliminarProducto(${idx})" aria-label="Eliminar">×</button>
+            <button class="del-btn" onclick="eliminarProducto('${p.id}')" aria-label="Eliminar">×</button>
           </div>
           <div class="recent-meta">Costo ${fmt(p.costo)} · Venta ${fmt(p.precio)} · Margen ${margen}%</div>
         </div>`;
@@ -719,24 +806,19 @@ function renderCatalog() {
 const ESTADO_LABEL = { enviado: '🟡 Enviado', completado: '🟢 Completado', devolucion: '🔴 Devolución' };
 const SUBESTADO_LABEL = { tramite: 'En trámite de devolución', devuelto: 'Devuelto al comercio de origen' };
 
-function actualizarEstadoEnvio(id, estado) {
-  const s = salesLog.find(x => x.id === id);
-  if (!s) return;
-  s.estado = estado;
-  if (estado === 'devolucion') {
-    if (!s.subEstadoDevolucion) s.subEstadoDevolucion = 'tramite';
-  } else {
-    s.subEstadoDevolucion = null;
-  }
-  save();
+async function actualizarEstadoEnvio(id, estado) {
+  const sub = estado === 'devolucion' ? 'tramite' : null;
+  await postAction({ accion: 'actualizar_estado_envio', id, estado, subEstadoDevolucion: sub });
+  await fetchAllData();
   renderEnvios();
 }
 
-function actualizarSubEstado(id, sub) {
+async function actualizarSubEstado(id, sub) {
   const s = salesLog.find(x => x.id === id);
-  if (!s) return;
-  s.subEstadoDevolucion = sub;
-  save();
+  const estadoActual = s ? s.estado : 'devolucion';
+  await postAction({ accion: 'actualizar_estado_envio', id, estado: estadoActual, subEstadoDevolucion: sub });
+  await fetchAllData();
+  renderEnvios();
 }
 
 function renderEnvios() {
@@ -770,49 +852,44 @@ function renderEnvios() {
 
 /* ---------- Gastos ---------- */
 
-const TIPOS_GASTO = ['Empleados', 'Publicidad', 'Impresiones', 'Otros'];
 const TIPO_LABEL = { Empleados: 'Pago a empleados', Publicidad: 'Publicidad', Impresiones: 'Impresiones', Otros: 'Otros' };
+const TIPOS_GASTO = ['Empleados', 'Publicidad', 'Impresiones', 'Otros'];
 
 async function guardarGasto() {
   const tipo = document.getElementById('g-tipo').value;
   const descripcion = document.getElementById('g-desc').value.trim();
   const monto = parseFloat(document.getElementById('g-monto').value) || 0;
   const fecha = document.getElementById('g-fecha').value || new Date().toISOString().split('T')[0];
-
   if (!monto) { toast('Ingresa el monto del gasto', 'error'); return; }
 
-  const row = { fecha, tipo, descripcion, monto, registradoPor: currentUser.nombre };
-  expensesLog.unshift(row);
-  if (expensesLog.length > 100) expensesLog.pop();
-  save();
+  const btn = document.getElementById('btn-guardar-gasto');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
 
-  try {
-    await fetch(URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ registro: 'gasto', ...row })
-    });
-  } catch(e) { /* el gasto ya quedó guardado localmente aunque falle la sincronización */ }
+  const id = 'g' + Date.now() + Math.random().toString(36).slice(2, 8);
+  const row = { id, fecha, tipo, descripcion, monto, registradoPor: currentUser.nombre };
+  await postAction({ accion: 'crear_gasto', ...row });
+  await fetchAllData();
 
   document.getElementById('g-desc').value = '';
   document.getElementById('g-monto').value = '';
   renderGastos();
   toast('Gasto guardado');
+  btn.disabled = false;
+  btn.textContent = 'Guardar gasto';
 }
 
-function eliminarGasto(idx) {
+async function eliminarGasto(id) {
   if (!confirm('¿Eliminar este gasto?')) return;
-  expensesLog.splice(idx, 1);
-  save();
+  await postAction({ accion: 'eliminar_gasto', id });
+  await fetchAllData();
   renderGastos();
 }
 
 function renderGastos() {
   const body = document.getElementById('gastos-list');
   if (!expensesLog.length) { body.innerHTML = '<div class="empty">Sin gastos registrados aún.</div>'; return; }
-  body.innerHTML = expensesLog.slice(0, 50).map(g => {
-    const idx = expensesLog.indexOf(g);
+  body.innerHTML = expensesLog.map(g => {
     const d = new Date(g.fecha + 'T12:00:00');
     const dateStr = d.getDate() + '/' + (d.getMonth()+1);
     return `<div class="recent-item">
@@ -820,7 +897,7 @@ function renderGastos() {
         <span class="recent-prod">${TIPO_LABEL[g.tipo] || g.tipo}<span class="badge">${dateStr}</span></span>
         <span class="gain-right">
           <span class="recent-gain loss">-${fmt(g.monto)}</span>
-          <button class="del-btn" onclick="eliminarGasto(${idx})" aria-label="Eliminar">×</button>
+          <button class="del-btn" onclick="eliminarGasto('${g.id}')" aria-label="Eliminar">×</button>
         </span>
       </div>
       <div class="recent-meta">${g.descripcion || 'Sin descripción'}${g.registradoPor ? ' · ' + g.registradoPor : ''}</div>
