@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -291,8 +292,8 @@
         <label>Nombre referencia</label>
         <input type="text" id="c-nombre" placeholder="Ej: Swatch Irony Diaphane">
       </div>
-      <div class="row2">
-        <div class="form-group">
+      <div class="row2" id="catalog-price-row">
+        <div class="form-group admin-only" id="catalog-cost-field">
           <label>Costo ($)</label>
           <input type="number" id="c-costo" placeholder="0" min="0">
         </div>
@@ -544,6 +545,16 @@ function renderUserChip() {
   chip.innerHTML = `<span class="user-name">${currentUser.nombre}</span><span class="role-tag">${roleLabel}</span><button class="logout-btn" onclick="logout()" aria-label="Cerrar sesión">⏻</button>`;
 }
 
+function aplicarPermisosVisuales() {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
+  });
+
+  const priceRow = document.getElementById('catalog-price-row');
+  if (priceRow) priceRow.className = isAdmin ? 'row2' : '';
+}
+
 /* ---------- Tabs ---------- */
 
 const ALL_TABS = [
@@ -555,6 +566,7 @@ const ALL_TABS = [
 ];
 
 function renderTabs() {
+  aplicarPermisosVisuales();
   const visible = ALL_TABS.filter(t => t.roles.includes(currentUser.role));
   document.getElementById('tabs-container').innerHTML = visible.map((t) =>
     `<button class="tab" data-tab="${t.id}" onclick="switchTab('${t.id}')">${t.label}</button>`
@@ -749,7 +761,7 @@ function resetForm() {
 async function agregarProducto() {
   const cat = document.getElementById('c-cat').value.trim().toUpperCase();
   const nombre = document.getElementById('c-nombre').value.trim();
-  const costo = parseFloat(document.getElementById('c-costo').value) || 0;
+  const costo = currentUser.role === 'admin' ? (parseFloat(document.getElementById('c-costo').value) || 0) : 0;
   const precio = parseFloat(document.getElementById('c-precio').value) || 0;
   if (!cat || !nombre) { toast('Completa categoría y nombre', 'error'); return; }
 
@@ -789,12 +801,15 @@ function renderCatalog() {
     return `<div class="cat-header">${cat}</div>` +
       items.map(p => {
         const margen = p.precio > 0 ? Math.round(((p.precio - p.costo) / p.precio) * 100) : 0;
+        const meta = currentUser.role === 'admin'
+          ? `Costo ${fmt(p.costo)} · Venta ${fmt(p.precio)} · Margen ${margen}%`
+          : `Venta ${fmt(p.precio)}`;
         return `<div class="recent-item">
           <div class="recent-top">
             <span class="recent-prod">${p.nombre}</span>
             <button class="del-btn" onclick="eliminarProducto('${p.id}')" aria-label="Eliminar">×</button>
           </div>
-          <div class="recent-meta">Costo ${fmt(p.costo)} · Venta ${fmt(p.precio)} · Margen ${margen}%</div>
+          <div class="recent-meta">${meta}</div>
         </div>`;
       }).join('');
   }).join('');
