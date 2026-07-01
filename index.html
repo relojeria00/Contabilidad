@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -100,6 +101,13 @@
   .estado-select.estado-completado { border-color: var(--success); color: var(--success); }
   .estado-select.estado-enviado { border-color: var(--warning); color: var(--warning); }
   .estado-select.estado-devolucion { border-color: var(--danger); color: var(--danger); }
+  .product-item { padding: 12px; border: 0.5px solid var(--border); border-radius: var(--radius); background: var(--bg2); margin-bottom: 10px; }
+  .product-item:last-child { margin-bottom: 0; }
+  .product-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .product-title { font-size: 13px; font-weight: 500; color: var(--text2); }
+  .btn-secondary { width: 100%; padding: 11px 12px; background: var(--bg2); color: var(--text); border: 0.5px solid var(--border2); border-radius: var(--radius); font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; }
+  .btn-secondary:active { opacity: 0.75; }
+  .summary-filter { display: grid; grid-template-columns: 1.5fr 1fr; gap: 10px; margin-bottom: 12px; }
 
   .login-overlay { position: fixed; inset: 0; background: var(--bg3); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
   .login-card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 32px 24px; width: 100%; max-width: 320px; text-align: center; }
@@ -212,22 +220,8 @@
 
     <div class="card">
       <div class="card-title">Producto</div>
-      <div class="form-group">
-        <label>Categoría</label>
-        <select id="v-categoria" onchange="onCatChange()">
-          <option value="">Selecciona categoría...</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Referencia</label>
-        <select id="v-producto" onchange="onProdChange()">
-          <option value="">Primero selecciona categoría</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Color / detalle</label>
-        <input type="text" id="v-color" placeholder="Negro, Azul/Dorado...">
-      </div>
+      <div id="productos-venta"></div>
+      <button class="btn-secondary" type="button" onclick="agregarProductoVenta()">+ Agregar producto</button>
     </div>
 
     <div class="card">
@@ -263,12 +257,8 @@
     </div>
 
     <div class="card">
-      <div class="card-title">Precios</div>
-      <div class="form-group">
-        <label>Precio de venta ($)</label>
-        <input type="number" id="v-precio" placeholder="0" min="0" oninput="updatePreview()">
-        <div class="hint">El costo del producto se toma del catálogo</div>
-      </div>
+      <div class="card-title">Total de la venta</div>
+      <div class="hint" style="margin-bottom:10px;">Los precios se suman desde los productos agregados. El costo se toma del catálogo.</div>
       <div id="gain-preview" class="gain-preview">
         <div class="gain-label">Ganancia estimada</div>
         <div class="gain-value" id="gain-val"></div>
@@ -358,7 +348,17 @@
   <!-- RESUMEN (solo administrador) -->
   <div id="sec-resumen" class="section">
     <div class="card">
-      <div class="card-title">Este mes</div>
+      <div class="card-title">Balance por mes</div>
+      <div class="summary-filter">
+        <div class="form-group">
+          <label>Mes</label>
+          <select id="resumen-mes" onchange="renderResumen()"></select>
+        </div>
+        <div class="form-group">
+          <label>Año</label>
+          <select id="resumen-anio" onchange="renderResumen()"></select>
+        </div>
+      </div>
       <div class="metric-grid" id="metrics"></div>
     </div>
     <div class="card">
@@ -397,6 +397,7 @@ let pollInterval = null;
 let products = [];
 let salesLog = [];
 let expensesLog = [];
+let ventaProductoSeq = 0;
 
 function fmt(n) {
   return '$' + Math.round(n).toLocaleString('es-CO');
@@ -437,6 +438,7 @@ async function fetchAllData() {
     products = (data.productos || []).map(p => ({ id: p.id, cat: p.cat, nombre: p.nombre, costo: Number(p.costo)||0, precio: Number(p.precio)||0 }));
     salesLog = (data.ventas || []).map(normalizarVenta).reverse();
     expensesLog = (data.gastos || []).map(normalizarGasto).reverse();
+    actualizarAniosResumen();
     return true;
   } catch (e) {
     toast('No se pudo conectar con Google Sheets', 'error');
@@ -531,10 +533,12 @@ async function entrarApp() {
   document.getElementById('v-fecha').value = new Date().toISOString().split('T')[0];
   const gFecha = document.getElementById('g-fecha');
   if (gFecha) gFecha.value = new Date().toISOString().split('T')[0];
+  prepararSelectorResumen();
 
   toast('Cargando datos...');
   await fetchAllData();
   switchTab('venta');
+  if (!document.querySelector('.product-item')) agregarProductoVenta();
   buildCatSelect();
   iniciarPolling();
 }
@@ -586,6 +590,35 @@ function switchTab(tab) {
   if (tab === 'gastos') renderGastos();
 }
 
+function prepararSelectorResumen() {
+  const mesSel = document.getElementById('resumen-mes');
+  const anioSel = document.getElementById('resumen-anio');
+  if (!mesSel || !anioSel) return;
+  const now = new Date();
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  mesSel.innerHTML = meses.map((m, idx) => `<option value="${idx}">${m}</option>`).join('');
+  const anioActual = now.getFullYear();
+  anioSel.innerHTML = Array.from({ length: 7 }, (_, i) => anioActual - i)
+    .map(y => `<option value="${y}">${y}</option>`).join('');
+  mesSel.value = now.getMonth();
+  anioSel.value = anioActual;
+}
+
+function actualizarAniosResumen() {
+  const anioSel = document.getElementById('resumen-anio');
+  if (!anioSel) return;
+  const seleccionado = anioSel.value;
+  const anios = new Set([new Date().getFullYear()]);
+  [...salesLog, ...expensesLog].forEach(item => {
+    if (!item.fecha) return;
+    const d = new Date(item.fecha + 'T12:00:00');
+    if (!Number.isNaN(d.getFullYear())) anios.add(d.getFullYear());
+  });
+  const ordenados = [...anios].sort((a, b) => b - a);
+  anioSel.innerHTML = ordenados.map(y => `<option value="${y}">${y}</option>`).join('');
+  anioSel.value = ordenados.includes(Number(seleccionado)) ? seleccionado : String(new Date().getFullYear());
+}
+
 /* ---------- Catálogo / selects ---------- */
 
 function getCategories() {
@@ -593,44 +626,121 @@ function getCategories() {
 }
 
 function buildCatSelect() {
-  const sel = document.getElementById('v-categoria');
-  const cur = sel.value;
-  const cats = getCategories();
-  sel.innerHTML = '<option value="">Selecciona categoría...</option>' +
-    cats.map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
-  if (cur && cats.includes(cur)) onCatChange();
+  document.querySelectorAll('.venta-producto-categoria').forEach(sel => {
+    const cur = sel.value;
+    const cats = getCategories();
+    sel.innerHTML = '<option value="">Selecciona categoría...</option>' +
+      cats.map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+    if (cur && cats.includes(cur)) onCatChange(sel.dataset.item);
+  });
 }
 
-function onCatChange() {
-  const cat = document.getElementById('v-categoria').value;
-  const sel = document.getElementById('v-producto');
+function agregarProductoVenta() {
+  const cont = document.getElementById('productos-venta');
+  const itemId = 'item' + (++ventaProductoSeq);
+  const cats = getCategories();
+  const count = cont.querySelectorAll('.product-item').length + 1;
+  const div = document.createElement('div');
+  div.className = 'product-item';
+  div.dataset.item = itemId;
+  div.innerHTML = `
+    <div class="product-head">
+      <span class="product-title">Producto ${count}</span>
+      ${count > 1 ? `<button class="del-btn" type="button" onclick="eliminarProductoVenta('${itemId}')" aria-label="Eliminar producto">×</button>` : ''}
+    </div>
+    <div class="form-group">
+      <label>Categoría</label>
+      <select class="venta-producto-categoria" data-item="${itemId}" onchange="onCatChange('${itemId}')">
+        <option value="">Selecciona categoría...</option>
+        ${cats.map(c => `<option value="${c}">${c}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Referencia</label>
+      <select class="venta-producto-referencia" data-item="${itemId}" onchange="onProdChange('${itemId}')">
+        <option value="">Primero selecciona categoría</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Color / detalle</label>
+      <input type="text" class="venta-producto-color" data-item="${itemId}" placeholder="Negro, Azul/Dorado...">
+    </div>
+    <div class="form-group">
+      <label>Precio de venta ($)</label>
+      <input type="number" class="venta-producto-precio" data-item="${itemId}" placeholder="0" min="0" oninput="updatePreview()">
+    </div>
+  `;
+  cont.appendChild(div);
+  actualizarTitulosProductos();
+  updatePreview();
+}
+
+function eliminarProductoVenta(itemId) {
+  const item = document.querySelector(`.product-item[data-item="${itemId}"]`);
+  if (item) item.remove();
+  actualizarTitulosProductos();
+  updatePreview();
+}
+
+function actualizarTitulosProductos() {
+  document.querySelectorAll('.product-item').forEach((item, idx) => {
+    const title = item.querySelector('.product-title');
+    if (title) title.textContent = 'Producto ' + (idx + 1);
+  });
+}
+
+function onCatChange(itemId) {
+  const item = document.querySelector(`.product-item[data-item="${itemId}"]`);
+  if (!item) return;
+  const cat = item.querySelector('.venta-producto-categoria').value;
+  const sel = item.querySelector('.venta-producto-referencia');
   const curProd = sel.value;
   const prods = products.filter(p => p.cat === cat);
   sel.innerHTML = prods.length
     ? '<option value="">Selecciona referencia...</option>' + prods.map(p => `<option value="${p.id}" ${p.id===curProd?'selected':''}>${p.nombre}</option>`).join('')
     : '<option value="">Sin referencias en esta categoría</option>';
   if (!prods.some(p => p.id === curProd)) {
-    document.getElementById('v-precio').value = '';
-    document.getElementById('v-color').value = '';
+    item.querySelector('.venta-producto-precio').value = '';
+    item.querySelector('.venta-producto-color').value = '';
     document.getElementById('gain-preview').style.display = 'none';
   }
+  updatePreview();
 }
 
-function onProdChange() {
-  const id = document.getElementById('v-producto').value;
+function onProdChange(itemId) {
+  const item = document.querySelector(`.product-item[data-item="${itemId}"]`);
+  if (!item) return;
+  const id = item.querySelector('.venta-producto-referencia').value;
   const p = products.find(x => x.id === id);
   if (!p) return;
-  document.getElementById('v-precio').value = p.precio;
+  item.querySelector('.venta-producto-precio').value = p.precio;
   updatePreview();
 }
 
 /* ---------- Preview de envío y ganancia ---------- */
 
+function obtenerProductosVenta() {
+  return [...document.querySelectorAll('.product-item')].map(item => {
+    const catVal = item.querySelector('.venta-producto-categoria').value;
+    const prodId = item.querySelector('.venta-producto-referencia').value;
+    const prod = products.find(p => p.id === prodId);
+    const color = item.querySelector('.venta-producto-color').value.trim();
+    const precio = parseFloat(item.querySelector('.venta-producto-precio').value) || 0;
+    return {
+      catVal,
+      prodId,
+      prod,
+      color,
+      precio,
+      costo: prod ? (prod.costo || 0) : 0
+    };
+  });
+}
+
 function updatePreview() {
-  const precio = parseFloat(document.getElementById('v-precio').value) || 0;
-  const prodId = document.getElementById('v-producto').value;
-  const prod = products.find(p => p.id === prodId);
-  const costo = prod ? (prod.costo || 0) : 0;
+  const productosVenta = obtenerProductosVenta();
+  const precio = productosVenta.reduce((a, p) => a + p.precio, 0);
+  const costo = productosVenta.reduce((a, p) => a + p.costo, 0);
   const envioCobrado = parseFloat(document.getElementById('v-envio-cobrado').value) || 0;
   const envioReal = parseFloat(document.getElementById('v-envio-real').value) || 0;
   const envioAsumidoEmpresa = envioReal - envioCobrado;
@@ -661,8 +771,9 @@ function updatePreview() {
     valEl.className = 'gain-value' + (isLoss ? ' loss' : '');
     valEl.textContent = fmt(ganancia);
     const margen = precio > 0 ? Math.round((ganancia / precio) * 100) : 0;
+    const productosTxt = productosVenta.filter(p => p.prod).length;
     document.getElementById('gain-break').textContent =
-      `Venta ${fmt(precio)} − Costo ${fmt(costo)} − Envío empresa ${fmt(envioAsumidoEmpresa)} · Margen ${margen}%`;
+      `Venta ${fmt(precio)} − Costo ${fmt(costo)} − Envío empresa ${fmt(envioAsumidoEmpresa)} · Margen ${margen}% · ${productosTxt} producto${productosTxt===1?'':'s'}`;
   } else {
     prev.style.display = 'none';
   }
@@ -681,34 +792,35 @@ async function guardarVenta() {
   const fecha = document.getElementById('v-fecha').value;
   const canal = document.getElementById('v-canal').value;
   const formaPago = document.getElementById('v-formapago').value;
-  const catVal = document.getElementById('v-categoria').value;
-  const prodId = document.getElementById('v-producto').value;
-  const color = document.getElementById('v-color').value.trim();
   const transportadora = document.getElementById('v-transportadora').value;
   const guia = document.getElementById('v-guia').value.trim();
   const envioCobrado = parseFloat(document.getElementById('v-envio-cobrado').value) || 0;
   const envioReal = parseFloat(document.getElementById('v-envio-real').value) || 0;
-  const precio = parseFloat(document.getElementById('v-precio').value) || 0;
+  const productosVenta = obtenerProductosVenta();
+  const productosValidos = productosVenta.filter(p => p.catVal && p.prodId && p.prod && p.precio > 0);
 
-  if (!catVal || !prodId) { toast('Selecciona categoría y producto', 'error'); return; }
-  if (!precio) { toast('Ingresa el precio de venta', 'error'); return; }
+  if (!productosValidos.length) { toast('Agrega al menos un producto válido', 'error'); return; }
+  if (productosValidos.length !== productosVenta.length) { toast('Completa categoría, referencia y precio de cada producto', 'error'); return; }
 
-  const prod = products.find(p => p.id === prodId);
-  if (!prod) { toast('Selecciona un producto válido', 'error'); return; }
-
-  const costo = prod.costo || 0;
+  const precio = productosValidos.reduce((a, p) => a + p.precio, 0);
+  const costo = productosValidos.reduce((a, p) => a + p.costo, 0);
   const envioAsumidoEmpresa = envioReal - envioCobrado;
   const ganancia = precio - costo - envioAsumidoEmpresa;
   const idNuevo = 'v' + Date.now() + Math.random().toString(36).slice(2, 8);
+  const nombresProductos = productosValidos.map(p => p.prod.nombre).join(' + ');
+  const categoriasProductos = [...new Set(productosValidos.map(p => p.catVal))].join(' + ');
+  const coloresProductos = productosValidos
+    .map(p => `${p.prod.nombre}${p.color ? ': ' + p.color : ''}`)
+    .join(' | ');
   const row = {
     id: idNuevo,
     fecha: fecha || new Date().toISOString().split('T')[0],
     registradoPor,
     cliente, telefono, correo, direccion, barrio, ciudad,
     canal, formaPago,
-    categoria: catVal,
-    producto: prod.nombre,
-    color,
+    categoria: categoriasProductos,
+    producto: nombresProductos,
+    color: coloresProductos,
     transportadora, guia,
     envioCobrado, envioReal, envioAsumidoEmpresa,
     precioVenta: precio,
@@ -742,15 +854,15 @@ async function guardarVenta() {
 }
 
 function resetForm() {
-  ['v-cliente','v-telefono','v-correo','v-direccion','v-barrio','v-ciudad','v-color','v-precio','v-envio-real','v-guia'].forEach(id => {
+  ['v-cliente','v-telefono','v-correo','v-direccion','v-barrio','v-ciudad','v-envio-real','v-guia'].forEach(id => {
     document.getElementById(id).value = '';
   });
   document.getElementById('v-envio-cobrado').value = 20000;
-  document.getElementById('v-categoria').value = '';
   document.getElementById('v-canal').value = '';
   document.getElementById('v-formapago').value = '';
   document.getElementById('v-transportadora').value = '';
-  document.getElementById('v-producto').innerHTML = '<option value="">Primero selecciona categoría</option>';
+  document.getElementById('productos-venta').innerHTML = '';
+  agregarProductoVenta();
   document.getElementById('gain-preview').style.display = 'none';
   document.getElementById('envio-breakdown').style.display = 'none';
   document.getElementById('v-fecha').value = new Date().toISOString().split('T')[0];
@@ -921,9 +1033,11 @@ function renderGastos() {
 
 /* ---------- Resumen diario ---------- */
 
-function renderResumenDiario() {
+function renderResumenDiario(mesFiltro, anioFiltro) {
   const porDia = {};
   salesLog.forEach(s => {
+    const ds = new Date(s.fecha + 'T12:00:00');
+    if (ds.getMonth() !== mesFiltro || ds.getFullYear() !== anioFiltro) return;
     const f = s.fecha;
     if (!porDia[f]) porDia[f] = { ingresos: 0, costos: 0, envioAsumido: 0, gastos: 0, ventas: 0 };
     porDia[f].ingresos += s.precioVenta || 0;
@@ -932,6 +1046,8 @@ function renderResumenDiario() {
     porDia[f].ventas += 1;
   });
   expensesLog.forEach(g => {
+    const dg = new Date(g.fecha + 'T12:00:00');
+    if (dg.getMonth() !== mesFiltro || dg.getFullYear() !== anioFiltro) return;
     const f = g.fecha;
     if (!porDia[f]) porDia[f] = { ingresos: 0, costos: 0, envioAsumido: 0, gastos: 0, ventas: 0 };
     porDia[f].gastos += g.monto || 0;
@@ -959,10 +1075,12 @@ function renderResumenDiario() {
 /* ---------- Resumen ---------- */
 
 function renderResumen() {
-  renderResumenDiario();
   const now = new Date();
-  const mes = now.getMonth();
-  const anio = now.getFullYear();
+  const mesSel = document.getElementById('resumen-mes');
+  const anioSel = document.getElementById('resumen-anio');
+  const mes = mesSel ? Number(mesSel.value) : now.getMonth();
+  const anio = anioSel ? Number(anioSel.value) : now.getFullYear();
+  renderResumenDiario(mes, anio);
 
   const mesVentas = salesLog.filter(s => {
     const d = new Date(s.fecha + 'T12:00:00');
@@ -986,8 +1104,9 @@ function renderResumen() {
   const ganancia = ingresos - costos - envioAsumidoEmpresa - gastosTotal;
 
   const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const periodo = `${meses[mes]} ${anio}`;
   document.getElementById('metrics').innerHTML = `
-    <div class="metric"><div class="metric-label">Ingresos ${meses[mes]}</div><div class="metric-value">${fmt(ingresos)}</div></div>
+    <div class="metric"><div class="metric-label">Ingresos ${periodo}</div><div class="metric-value">${fmt(ingresos)}</div></div>
     <div class="metric"><div class="metric-label">Ganancia neta</div><div class="metric-value ${ganancia>=0?'green':'red'}">${fmt(ganancia)}</div></div>
     <div class="metric"><div class="metric-label">Costos productos</div><div class="metric-value red">${fmt(costos)}</div></div>
     <div class="metric"><div class="metric-label">Envío asumido (empresa)</div><div class="metric-value red">${fmt(envioAsumidoEmpresa)}</div></div>
