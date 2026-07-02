@@ -101,6 +101,7 @@
   .estado-select.estado-completado { border-color: var(--success); color: var(--success); }
   .estado-select.estado-enviado { border-color: var(--warning); color: var(--warning); }
   .estado-select.estado-devolucion { border-color: var(--danger); color: var(--danger); }
+  .estado-select.estado-cambio { border-color: var(--info); color: var(--info); }
   .product-item { padding: 12px; border: 0.5px solid var(--border); border-radius: var(--radius); background: var(--bg2); margin-bottom: 10px; }
   .product-item:last-child { margin-bottom: 0; }
   .product-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
@@ -929,7 +930,7 @@ function renderCatalog() {
 
 /* ---------- Estado de envío ---------- */
 
-const ESTADO_LABEL = { enviado: '🟡 Enviado', completado: '🟢 Completado', devolucion: '🔴 Devolución' };
+const ESTADO_LABEL = { enviado: '🟡 Enviado', completado: '🟢 Completado', devolucion: '🔴 Devolución', cambio: '🔵 Cambio' };
 const SUBESTADO_LABEL = { tramite: 'En trámite de devolución', devuelto: 'Devuelto al comercio de origen' };
 
 async function actualizarEstadoEnvio(id, estado) {
@@ -969,6 +970,7 @@ function renderEnvios() {
           <option value="enviado" ${s.estado==='enviado'?'selected':''}>${ESTADO_LABEL.enviado}</option>
           <option value="completado" ${s.estado==='completado'?'selected':''}>${ESTADO_LABEL.completado}</option>
           <option value="devolucion" ${s.estado==='devolucion'?'selected':''}>${ESTADO_LABEL.devolucion}</option>
+          <option value="cambio" ${s.estado==='cambio'?'selected':''}>${ESTADO_LABEL.cambio}</option>
         </select>
         ${subSelect}
       </div>
