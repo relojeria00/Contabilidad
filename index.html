@@ -96,6 +96,10 @@
   .envio-item:last-child { border-bottom: none; }
   .envio-controls { display: flex; gap: 8px; margin-top: 8px; }
   .envio-controls select { flex: 1; font-size: 13px; padding: 8px 10px; }
+  .envio-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .envio-filters .filter-wide { grid-column: 1 / -1; }
+  .envio-filter-label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .envio-results { font-size: 12px; color: var(--text3); margin: -4px 0 8px; }
   .estado-select.estado-completado { border-color: var(--success); color: var(--success); }
   .estado-select.estado-enviado { border-color: var(--warning); color: var(--warning); }
   .estado-select.estado-devolucion { border-color: var(--danger); color: var(--danger); }
@@ -305,6 +309,27 @@
   <div id="sec-envios" class="section">
     <div class="card">
       <div class="card-title">Estado de los envíos</div>
+      <div class="envio-filters" aria-label="Filtrar envíos">
+        <div>
+          <label class="envio-filter-label" for="f-envio-fecha">Fecha</label>
+          <input type="date" id="f-envio-fecha" onchange="renderEnvios()">
+        </div>
+        <div>
+          <label class="envio-filter-label" for="f-envio-estado">Estado</label>
+          <select id="f-envio-estado" onchange="renderEnvios()">
+            <option value="">Todos los estados</option>
+            <option value="enviado">Enviado</option>
+            <option value="completado">Completado</option>
+            <option value="devolucion">Devolución</option>
+            <option value="cambio">Cambio</option>
+          </select>
+        </div>
+        <div class="filter-wide">
+          <label class="envio-filter-label" for="f-envio-busqueda">Nombre o número de guía</label>
+          <input type="search" id="f-envio-busqueda" placeholder="Buscar por cliente o guía" oninput="renderEnvios()">
+        </div>
+      </div>
+      <div id="envios-results" class="envio-results" aria-live="polite"></div>
       <div id="envios-list"><div class="empty">Sin envíos registrados aún.</div></div>
     </div>
   </div>
@@ -976,8 +1001,29 @@ async function actualizarSubEstado(id, sub) {
 
 function renderEnvios() {
   const body = document.getElementById('envios-list');
-  if (!salesLog.length) { body.innerHTML = '<div class="empty">Sin envíos registrados aún.</div>'; return; }
-  body.innerHTML = salesLog.map(s => {
+  const results = document.getElementById('envios-results');
+  const fecha = document.getElementById('f-envio-fecha').value;
+  const estado = document.getElementById('f-envio-estado').value;
+  const busqueda = document.getElementById('f-envio-busqueda').value.trim().toLocaleLowerCase();
+  const hayFiltros = fecha || estado || busqueda;
+  const enviosFiltrados = salesLog.filter(s => {
+    const texto = `${s.cliente || ''} ${s.guia || ''}`.toLocaleLowerCase();
+    return (!fecha || s.fecha === fecha) &&
+      (!estado || s.estado === estado) &&
+      (!busqueda || texto.includes(busqueda));
+  });
+
+  if (!salesLog.length) {
+    results.textContent = '';
+    body.innerHTML = '<div class="empty">Sin envíos registrados aún.</div>';
+    return;
+  }
+  results.textContent = hayFiltros ? `${enviosFiltrados.length} pedido${enviosFiltrados.length === 1 ? '' : 's'} encontrado${enviosFiltrados.length === 1 ? '' : 's'}` : `${salesLog.length} pedido${salesLog.length === 1 ? '' : 's'} registrado${salesLog.length === 1 ? '' : 's'}`;
+  if (!enviosFiltrados.length) {
+    body.innerHTML = '<div class="empty">No hay pedidos que coincidan con los filtros.</div>';
+    return;
+  }
+  body.innerHTML = enviosFiltrados.map(s => {
     const d = new Date(s.fecha + 'T12:00:00');
     const dateStr = d.getDate() + '/' + (d.getMonth()+1);
     const subSelect = s.estado === 'devolucion' ? `
