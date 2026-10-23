@@ -1216,5 +1216,126 @@ function renderResumen() {
 
 checkSession();
 </script>
+
+<!-- ===== GRÁFICAS DEL RESUMEN (canales, tendencias, pagos, marcas, estados, transportadoras) ===== -->
+<script>
+(function(){
+/* ---------- Estilos ---------- */
+const st=document.createElement('style');
+st.textContent=`
+.gx-hb{margin-bottom:10px}.gx-hb-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:4px}
+.gx-track{height:8px;background:var(--bg3);border-radius:20px;overflow:hidden}.gx-track div{height:100%;border-radius:20px}
+.gx-donut{display:flex;align-items:center;gap:14px;margin:6px 0 14px}.gx-donut>div{flex:1;min-width:0}
+.gx-leg{display:flex;align-items:center;gap:7px;font-size:13px;padding:3px 0}.gx-leg i{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.gx-leg span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gx-legrow{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px}.gx-legrow .gx-leg{padding:0;font-size:12px;color:var(--text2)}
+.gx-scroll{overflow-x:auto}.gx-table{width:100%;border-collapse:collapse;font-size:12px}
+.gx-table th{text-align:right;font-weight:500;color:var(--text3);padding:6px 6px;border-bottom:0.5px solid var(--border);white-space:nowrap}
+.gx-table td{text-align:right;padding:7px 6px;border-bottom:0.5px solid var(--border);white-space:nowrap}
+.gx-table th:first-child,.gx-table td:first-child{text-align:left;font-weight:500}.gx-table .neg{color:var(--danger)}
+.gx-t1{font-size:12px;font-weight:500;fill:var(--text)}.gx-t2{font-size:8px;fill:var(--text3)}
+.gx-ax{font-size:9px;fill:var(--text3)}.gx-grid{stroke:var(--border);stroke-width:.5}
+.gx-note{font-size:12px;color:var(--text3);margin:2px 0 10px}.gx-note b{color:var(--text)}
+.gx-svg{width:100%;height:auto;display:block}`;
+document.head.appendChild(st);
+
+/* ---------- Tarjetas ---------- */
+const ref=document.getElementById('resumen-diario').parentElement;
+ref.insertAdjacentHTML('beforebegin',`
+<div class="card"><div class="card-title">Canales de venta</div>
+  <div class="form-group"><label>Medir por</label>
+    <select id="gx-metrica"><option value="ingresos">Ingresos ($)</option><option value="ventas">N° de ventas</option><option value="ganancia">Ganancia ($)</option></select></div>
+  <div id="gx-canal"></div><div id="gx-canal-tabla"></div></div>
+<div class="card"><div class="card-title">Evolución por canal · últimos 6 meses</div><div id="gx-meses"></div></div>
+<div class="card"><div class="card-title">Tendencia diaria del mes</div><div id="gx-diario"></div></div>
+<div class="card"><div class="card-title">Formas de pago</div><div id="gx-pago"></div></div>
+<div class="card"><div class="card-title">Marcas más vendidas</div><div id="gx-marcas"></div></div>
+<div class="card"><div class="card-title">Estado de los pedidos</div><div id="gx-estado"></div></div>
+<div class="card"><div class="card-title">Costo de envío por transportadora</div><div id="gx-transp"></div></div>`);
+document.getElementById('gx-metrica').addEventListener('change',()=>renderResumen());
+
+/* ---------- Utilidades ---------- */
+const P=['#185fa5','#3b6d11','#d98a1c','#a32d2d','#7a4fb5','#1d9e9e','#c4568c','#888780'];
+const CAN={'Mercado Libre':'#d98a1c','Página web':'#185fa5','WhatsApp':'#3b6d11'};
+const colCan=(k,i)=>CAN[k]||P[(i+3)%P.length];
+const EST={enviado:'#d98a1c',completado:'#3b6d11',devolucion:'#a32d2d',cambio:'#185fa5'};
+const ESTL={enviado:'Enviado',completado:'Completado',devolucion:'Devolución',cambio:'Cambio'};
+const MC=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const none='<div class="empty">Sin datos en este período.</div>';
+const sum=(a,f)=>a.reduce((t,x)=>t+f(x),0);
+const gan=s=>(s.precioVenta||0)-(s.costoProducto||0)-((s.envioReal||0)-(s.envioCobrado||0));
+const cn=s=>(s.canal||'').trim()||'Sin dato';
+const short=n=>{const a=Math.abs(n),s=n<0?'-':'';if(a>=1e6)return s+'$'+(a/1e6).toFixed(1).replace('.0','')+'M';if(a>=1e3)return s+'$'+Math.round(a/1e3)+'k';return s+'$'+Math.round(a);};
+const MET={ingresos:{f:s=>s.precioVenta||0,fmt:fmt,fs:short},ventas:{f:()=>1,fmt:String,fs:n=>String(Math.round(n))},ganancia:{f:gan,fmt:fmt,fs:short}};
+const enMes=(a,m,y)=>a.filter(x=>{const d=new Date(x.fecha+'T12:00:00');return d.getMonth()===m&&d.getFullYear()===y;});
+function group(a,kf,vf){const o={};a.forEach(x=>{[].concat(kf(x)).forEach(k=>{k=(k||'').trim()||'Sin dato';o[k]=(o[k]||0)+vf(x);});});return Object.entries(o).sort((p,q)=>q[1]-p[1]);}
+function hbars(e,f,cf,lf){if(!e.length)return none;const mx=Math.max(...e.map(x=>Math.abs(x[1])),1);
+  return e.map(([k,v],i)=>`<div class="gx-hb"><div class="gx-hb-top"><span>${lf?lf(k):k}</span><b>${f(v)}</b></div><div class="gx-track"><div style="width:${Math.max(2,Math.abs(v)/mx*100)}%;background:${cf?cf(k,i,v):P[i%P.length]}"></div></div></div>`).join('');}
+
+/* ---------- Gráficas ---------- */
+function donut(e,m){
+  const pos=e.map(([k,v])=>[k,Math.max(0,v)]),T=sum(pos,x=>x[1]);if(!T)return none;
+  const r=42,C=2*Math.PI*r;let off=0;
+  const segs=pos.map(([k,v],i)=>{const l=v/T*C,s=`<circle cx="60" cy="60" r="${r}" fill="none" stroke="${colCan(k,i)}" stroke-width="18" stroke-dasharray="${l} ${C-l}" stroke-dashoffset="${-off}" transform="rotate(-90 60 60)"/>`;off+=l;return s;}).join('');
+  const leg=pos.map(([k,v],i)=>`<div class="gx-leg"><i style="background:${colCan(k,i)}"></i><span>${k}</span><b>${Math.round(v/T*100)}%</b></div>`).join('');
+  return `<div class="gx-note">Canal líder: <b>${pos[0][0]}</b> · ${m.fmt(pos[0][1])}</div>
+  <div class="gx-donut"><svg viewBox="0 0 120 120" width="130" height="130" role="img" aria-label="Participación por canal">${segs}<text x="60" y="60" text-anchor="middle" class="gx-t1">${m.fs(T)}</text><text x="60" y="73" text-anchor="middle" class="gx-t2">total</text></svg><div>${leg}</div></div>`;
+}
+function tablaCanal(v){
+  if(!v.length)return '';
+  const rows=[...new Set(v.map(cn))].map(c=>{const a=v.filter(s=>cn(s)===c),ing=sum(a,s=>s.precioVenta||0),g=sum(a,gan);return{c,n:a.length,ing,g,t:ing/a.length,mg:ing?Math.round(g/ing*100):0};}).sort((a,b)=>b.ing-a.ing);
+  return `<div class="gx-scroll"><table class="gx-table"><tr><th>Canal</th><th>Ventas</th><th>Ingresos</th><th>Ticket</th><th>Ganancia</th><th>Margen</th></tr>${rows.map(r=>`<tr><td>${r.c}</td><td>${r.n}</td><td>${fmt(r.ing)}</td><td>${fmt(r.t)}</td><td class="${r.g<0?'neg':''}">${fmt(r.g)}</td><td>${r.mg}%</td></tr>`).join('')}</table></div>`;
+}
+function apilado(mes,anio,m){
+  const ms=[];for(let i=5;i>=0;i--){const d=new Date(anio,mes-i,1);ms.push({m:d.getMonth(),y:d.getFullYear()});}
+  const data=ms.map(o=>enMes(salesLog,o.m,o.y)),cs=[...new Set(data.flat().map(cn))];
+  const vals=data.map(d=>cs.map(c=>Math.max(0,sum(d.filter(s=>cn(s)===c),m.f))));
+  const tot=vals.map(r=>sum(r,x=>x));if(!sum(tot,x=>x))return none;
+  const W=330,H=180,L=40,B=22,T=10,mx=Math.max(...tot),step=(W-L-8)/6,bw=step*0.6,y=v=>T+(H-T-B)*(1-v/mx);
+  let g='';[0,.5,1].forEach(f=>{g+=`<line class="gx-grid" x1="${L}" x2="${W}" y1="${y(mx*f)}" y2="${y(mx*f)}"/><text class="gx-ax" x="${L-4}" y="${y(mx*f)+3}" text-anchor="end">${m.fs(mx*f)}</text>`;});
+  let b='';vals.forEach((r,i)=>{let acc=0;const x=L+i*step+(step-bw)/2;
+    r.forEach((v,j)=>{if(!v)return;b+=`<rect x="${x}" y="${y(acc+v)}" width="${bw}" height="${y(acc)-y(acc+v)}" fill="${colCan(cs[j],j)}"/>`;acc+=v;});
+    b+=`<text class="gx-ax" x="${x+bw/2}" y="${H-7}" text-anchor="middle">${MC[ms[i].m]}</text>`;});
+  const leg=cs.map((c,j)=>`<div class="gx-leg"><i style="background:${colCan(c,j)}"></i>${c}</div>`).join('');
+  return `<svg class="gx-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolución por canal">${g}${b}</svg><div class="gx-legrow">${leg}</div>`;
+}
+function diario(v,mes,anio){
+  if(!v.length)return none;
+  const n=new Date(anio,mes+1,0).getDate(),ing=Array(n).fill(0),g=Array(n).fill(0);
+  v.forEach(s=>{const d=new Date(s.fecha+'T12:00:00').getDate()-1;ing[d]+=s.precioVenta||0;g[d]+=gan(s);});
+  const W=330,H=170,L=40,B=20,T=10,mn=Math.min(0,...g),mx=Math.max(...ing,1),step=(W-L-6)/n,y=val=>T+(H-T-B)*(1-(val-mn)/(mx-mn));
+  let s=`<line class="gx-grid" x1="${L}" x2="${W}" y1="${y(0)}" y2="${y(0)}"/><text class="gx-ax" x="${L-4}" y="${y(0)+3}" text-anchor="end">$0</text><line class="gx-grid" x1="${L}" x2="${W}" y1="${y(mx)}" y2="${y(mx)}"/><text class="gx-ax" x="${L-4}" y="${y(mx)+3}" text-anchor="end">${short(mx)}</text>`;
+  if(mn<0)s+=`<text class="gx-ax" x="${L-4}" y="${y(mn)+3}" text-anchor="end">${short(mn)}</text>`;
+  ing.forEach((val,i)=>{if(val)s+=`<rect x="${L+i*step+.5}" y="${y(val)}" width="${Math.max(1,step-1.5)}" height="${y(0)-y(val)}" fill="#185fa5" opacity=".75"/>`;});
+  const pts=g.map((val,i)=>ing[i]?[L+i*step+step/2,y(val)]:null).filter(Boolean);
+  s+=`<polyline fill="none" stroke="#3b6d11" stroke-width="1.8" points="${pts.map(p=>p.join(',')).join(' ')}"/>`+pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="2.2" fill="#3b6d11"/>`).join('');
+  for(let d=1;d<=n;d++)if(d===1||d%5===0)s+=`<text class="gx-ax" x="${L+(d-1)*step+step/2}" y="${H-6}" text-anchor="middle">${d}</text>`;
+  const best=ing.indexOf(Math.max(...ing))+1;
+  return `<div class="gx-note">Mejor día: <b>${best} de ${MC[mes]}</b> · ${fmt(Math.max(...ing))}</div><svg class="gx-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tendencia diaria">${s}</svg>
+  <div class="gx-legrow"><div class="gx-leg"><i style="background:#185fa5"></i>Ingresos</div><div class="gx-leg"><i style="background:#3b6d11"></i>Ganancia (sin gastos operativos)</div></div>`;
+}
+
+/* ---------- Render ---------- */
+function draw(){
+  const now=new Date(),ms=document.getElementById('resumen-mes'),as=document.getElementById('resumen-anio');
+  const mes=ms?Number(ms.value):now.getMonth(),anio=as?Number(as.value):now.getFullYear();
+  const m=MET[document.getElementById('gx-metrica').value],v=enMes(salesLog,mes,anio),$=id=>document.getElementById(id);
+  const ec=group(v,cn,m.f);
+  $('gx-canal').innerHTML=ec.length?donut(ec,m):none;
+  $('gx-canal-tabla').innerHTML=tablaCanal(v);
+  $('gx-meses').innerHTML=apilado(mes,anio,m);
+  $('gx-diario').innerHTML=diario(v,mes,anio);
+  $('gx-pago').innerHTML=hbars(group(v,s=>s.formaPago,m.f),m.fmt);
+  $('gx-marcas').innerHTML=hbars(group(v,s=>(s.categoria||'').split(' + '),()=>1).slice(0,8),n=>n+(n===1?' venta':' ventas'));
+  const es=group(v,s=>s.estado||'enviado',()=>1),dev=v.filter(s=>s.estado==='devolucion').length,cam=v.filter(s=>s.estado==='cambio').length;
+  $('gx-estado').innerHTML=v.length?`<div class="gx-note">Tasa de devolución: <b>${Math.round(dev/v.length*100)}%</b> (${dev} de ${v.length}) · Cambios: <b>${cam}</b></div>`+hbars(es,n=>n,k=>EST[k]||P[7],k=>ESTL[k]||k):none;
+  const tr=group(v,s=>s.transportadora,s=>(s.envioReal||0)-(s.envioCobrado||0));
+  $('gx-transp').innerHTML=v.length?`<div class="gx-note">Rojo = la empresa asume el sobrecosto · Verde = el envío deja ganancia</div>`+hbars(tr,fmt,(k,i,val)=>val>0?'#a32d2d':'#3b6d11'):none;
+}
+const orig=renderResumen;
+renderResumen=function(){orig();draw();};
+if(document.getElementById('sec-resumen').classList.contains('active'))renderResumen();
+})();
+</script>
 </body>
 </html>
